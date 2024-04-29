@@ -8,11 +8,15 @@
 #include <wafel/patch.h>
 #include <wafel/ios/svc.h>
 #include <wafel/trampoline.h>
-
-
+#include "mbr.h"
 
 #define SECTOR_SIZE 512
 #define HEAP_ID 0xCAFF
+#define DEVTYPE_USB 17
+
+#define LD_DWORD(ptr)       (u16)(((u32)*((u8*)(ptr)+3)<<24)|((u32)*((u8*)(ptr)+2)<<16)|((u16)*((u8*)(ptr)+1)<<8)|*(u8*)(ptr))
+
+static int (*FSSAL_attach_device)(int*) = (void*)0x10733aa4;
 
 static int sdusb_attach_device_handle[0xb5];
 
@@ -28,6 +32,15 @@ static int write_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount,
     return real_write(device_handle, lba_hi, lba + sdusb_offset, blkCount, blockSize, buf, cb, cb_ctx);
 }
 
+static partition_entry* find_usb_partition(mbr_sector* mbr){
+    for (size_t i = 1; i < MBR_MAX_PARTITIONS; i++){
+        if(mbr->partition[i].type == MBR_PARTITION_TYPE_MLC_NOSCFM){
+            return mbr->partition+i;
+        }
+    }
+    return NULL;
+}
+
 static void read_callback(void *parm1, u8 *buf){
     debug_printf("In read_callback(%p,%p)\n", parm1, buf);
     debug_printf("read_buff at %p:", buf);
@@ -38,11 +51,30 @@ static void read_callback(void *parm1, u8 *buf){
     }
     debug_printf("\n");
 
+    partition_entry *part = find_usb_partition((mbr_sector*)buf);
+
+    if(!part){
+        debug_printf("SDUSB: USB partition not found!!!\n");
+        return;
+    }
+    
+    sdusb_offset = LD_DWORD(part->lba_start);
+    u32 size = LD_DWORD(part->lba_length);
+
+    iosFree(HEAP_ID, buf); // also frees part
+
+    debug_printf("SDUSB: USB partition found: offset: %u, size: %u\n", sdusb_offset, size);
+
+    sdusb_attach_device_handle[0x3] = (int) sdusb_attach_device_handle;
     sdusb_attach_device_handle[0x76] = (int)read_wrapper;
     sdusb_attach_device_handle[0x76] = (int)write_wrapper;
+    sdusb_attach_device_handle[0x5] = DEVTYPE_USB;
+    sdusb_attach_device_handle[0xa] = size -1;
+    sdusb_attach_device_handle[0xa] = size;
 
-    iosFree(HEAP_ID, buf);
+    int res = FSSAL_attach_device(sdusb_attach_device_handle-3);
 
+    debug_printf("SDUSB: Attached pseudo USB device. res: 0x%X\n", res);
 
 }
 
