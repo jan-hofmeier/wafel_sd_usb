@@ -90,7 +90,7 @@ void hook_register_sd(trampoline_state *state){
     }
     debug_printf("Calling sdio_read at %p\n", real_read);
     int res = real_read(device_handle, 0, 0, 1, SECTOR_SIZE, buf, read_callback, buf);
-    debug_printf("sdio_read returned: %u¸n", res);
+    debug_printf("sdio_read returned: %u\n", res);
 }
 
 
