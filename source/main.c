@@ -14,7 +14,21 @@
 #define SECTOR_SIZE 512
 #define HEAP_ID 0xCAFF
 
-void read_callback(void *parm1, u8 *buf){
+static int sdusb_attach_device_handle[0xb5];
+
+static u32 sdusb_offset = 0xFFF;
+static int (*real_read)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)0x107bddd0;
+static int (*real_write)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)0x107bdd60;
+
+static int read_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
+    return real_read(device_handle, lba_hi, lba + sdusb_offset, blkCount, blockSize, buf, cb, cb_ctx);
+}
+
+static int write_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
+    return real_write(device_handle, lba_hi, lba + sdusb_offset, blkCount, blockSize, buf, cb, cb_ctx);
+}
+
+static void read_callback(void *parm1, u8 *buf){
     debug_printf("In read_callback(%p,%p)\n", parm1, buf);
     debug_printf("read_buff at %p:", buf);
     for(int i=0; i<SECTOR_SIZE; i++){
@@ -23,19 +37,27 @@ void read_callback(void *parm1, u8 *buf){
         debug_printf("%02X ", buf[i]);
     }
     debug_printf("\n");
+
+    sdusb_attach_device_handle[0x76] = (int)read_wrapper;
+    sdusb_attach_device_handle[0x76] = (int)write_wrapper;
+
     iosFree(HEAP_ID, buf);
+
+
 }
 
 void hook_register_sd(trampoline_state *state){
+    memcpy(sdusb_attach_device_handle, (int*) state->r[6] -3, sizeof(sdusb_attach_device_handle));
     int *device_handle = (int*)state->r[0] -3;
-    int (*read_dev)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)device_handle[0x76];
+    real_read = (void*)device_handle[0x76];
+    real_write = (void*)device_handle[0x78];
     void *buf = iosAllocAligned(0xCAFF, SECTOR_SIZE, 0x40);
     if(!buf){
         debug_printf("SDUSB: Failed to allocate IO buf\n");
         return;
     }
-    debug_printf("Calling sdio_read at %p\n", read_dev);
-    int res = read_dev(device_handle, 0, 0, 1, SECTOR_SIZE, buf, read_callback, buf);
+    debug_printf("Calling sdio_read at %p\n", real_read);
+    int res = real_read(device_handle, 0, 0, 1, SECTOR_SIZE, buf, read_callback, buf);
     debug_printf("sdio_read returned: %u¸n", res);
 }
 
