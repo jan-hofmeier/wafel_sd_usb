@@ -10,29 +10,32 @@
 #include <wafel/trampoline.h>
 
 
-struct sal_device_handle {
 
-} typedef sal_device_handle;
+#define SECTOR_SIZE 512
+#define HEAP_ID 0xCAFF
 
-u8 read_buff[512] ALIGNED(64);
-
-
-void read_callback(void *parm1, void *parm2){
-    debug_printf("In read_callback(%p,%p)\n", parm1, parm2);
-    debug_printf("read_buff at %p:", read_buff);
-    for(int i=0; i<sizeof(read_buff); i++){
+void read_callback(void *parm1, u8 *buf){
+    debug_printf("In read_callback(%p,%p)\n", parm1, buf);
+    debug_printf("read_buff at %p:", buf);
+    for(int i=0; i<SECTOR_SIZE; i++){
         if(i%32 == 0)
             debug_printf("\n");
-        debug_printf("%02X ", read_buff[i]);
+        debug_printf("%02X ", buf[i]);
     }
     debug_printf("\n");
+    iosFree(HEAP_ID, buf);
 }
 
 void hook_register_sd(trampoline_state *state){
     int *device_handle = (int*)state->r[0] -3;
     int (*read_dev)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)device_handle[0x76];
+    void *buf = iosAllocAligned(0xCAFF, SECTOR_SIZE, 0x40);
+    if(!buf){
+        debug_printf("SDUSB: Failed to allocate IO buf\n");
+        return;
+    }
     debug_printf("Calling sdio_read at %p\n", read_dev);
-    int res = read_dev(device_handle, 0, 0, 1, 512, read_buff, read_callback, read_buff);
+    int res = read_dev(device_handle, 0, 0, 1, SECTOR_SIZE, buf, read_callback, buf);
     debug_printf("sdio_read returned: %u¸n", res);
 }
 
