@@ -73,7 +73,9 @@ void hook_register_sd(trampoline_state *state){
     debug_printf("sdio_read returned: %u\n", res);
 
     debug_printf("SDUSB: Waiting for semaphore\n");
-    iosWaitSemaphore(ctx.semaphore, -1);
+    iosWaitSemaphore(ctx.semaphore, 0);
+
+    iosDestroySemaphore(ctx.semaphore);
 
     debug_printf("read_buff at %p:", buf);
     for(int i=0; i<SECTOR_SIZE; i++){
