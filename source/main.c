@@ -41,8 +41,40 @@ static partition_entry* find_usb_partition(mbr_sector* mbr){
     return NULL;
 }
 
-static void read_callback(void *parm1, u8 *buf){
-    debug_printf("In read_callback(%p,%p)\n", parm1, buf);
+struct cb_ctx {
+    int semaphore;
+    int res;
+} typedef cb_ctx;
+
+static void read_callback(int res, cb_ctx *ctx){
+    debug_printf("In read_callback(%d,%p)\n", res, ctx);
+    ctx->res = res;
+    iosSignalSemaphore(ctx->semaphore);
+}
+
+void hook_register_sd(trampoline_state *state){
+    memcpy(sdusb_attach_device_handle, (int*) state->r[6] -3, sizeof(sdusb_attach_device_handle));
+    int *device_handle = (int*)state->r[0] -3;
+    real_read = (void*)device_handle[0x76];
+    real_write = (void*)device_handle[0x78];
+    u8 *buf = iosAllocAligned(0xCAFF, SECTOR_SIZE, 0x40);
+    if(!buf){
+        debug_printf("SDUSB: Failed to allocate IO buf\n");
+        return;
+    }
+
+    cb_ctx ctx = {iosCreateSemaphore(1,0)};
+    if(ctx.semaphore < 0){
+        debug_printf("SDUSB: Error creating Semaphore: 0x%X\n", ctx.semaphore);
+    }
+
+    debug_printf("Calling sdio_read at %p\n", real_read);
+    int res = real_read(device_handle, 0, 0, 1, SECTOR_SIZE, buf, read_callback, &ctx);
+    debug_printf("sdio_read returned: %u\n", res);
+
+    debug_printf("SDUSB: Waiting for semaphore\n");
+    iosWaitSemaphore(ctx.semaphore, -1);
+
     debug_printf("read_buff at %p:", buf);
     for(int i=0; i<SECTOR_SIZE; i++){
         if(i%32 == 0)
@@ -72,25 +104,9 @@ static void read_callback(void *parm1, u8 *buf){
     sdusb_attach_device_handle[0xa] = size -1;
     sdusb_attach_device_handle[0xa] = size;
 
-    int res = FSSAL_attach_device(sdusb_attach_device_handle-3);
+    res = FSSAL_attach_device(sdusb_attach_device_handle-3);
 
     debug_printf("SDUSB: Attached pseudo USB device. res: 0x%X\n", res);
-
-}
-
-void hook_register_sd(trampoline_state *state){
-    memcpy(sdusb_attach_device_handle, (int*) state->r[6] -3, sizeof(sdusb_attach_device_handle));
-    int *device_handle = (int*)state->r[0] -3;
-    real_read = (void*)device_handle[0x76];
-    real_write = (void*)device_handle[0x78];
-    void *buf = iosAllocAligned(0xCAFF, SECTOR_SIZE, 0x40);
-    if(!buf){
-        debug_printf("SDUSB: Failed to allocate IO buf\n");
-        return;
-    }
-    debug_printf("Calling sdio_read at %p\n", real_read);
-    int res = real_read(device_handle, 0, 0, 1, SECTOR_SIZE, buf, read_callback, buf);
-    debug_printf("sdio_read returned: %u\n", res);
 }
 
 
