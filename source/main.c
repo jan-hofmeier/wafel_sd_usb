@@ -106,7 +106,7 @@ void hook_register_sd(trampoline_state *state){
     sdusb_attach_device_handle[0xa] = size -1;
     sdusb_attach_device_handle[0xa] = size;
 
-    res = FSSAL_attach_device(sdusb_attach_device_handle-3);
+    res = FSSAL_attach_device(sdusb_attach_device_handle+3);
 
     debug_printf("SDUSB: Attached pseudo USB device. res: 0x%X\n", res);
 }
