@@ -10,6 +10,8 @@
 #include <wafel/trampoline.h>
 #include "mbr.h"
 
+const char* MODULE_NAME = "SDUSB";
+
 #define SECTOR_SIZE 512
 #define LOCAL_HEAP_ID 0xCAFE
 #define DEVTYPE_USB 17
@@ -29,8 +31,10 @@ int extra_server_handle[SERVER_HANDLE_LEN]; // = HANDLE_END-SERVER_HANDLE_LEN;
 static u32 sdusb_offset = 0xFFFFFFF;
 static u32 sdusb_size = 0xFFFFFFFF;
 
-static int (*real_read)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)0x107bddd0;
-static int (*real_write)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)0x107bdd60;
+typedef int read_write_fun(int*, u32, u32, u32, u32, void*, void*, void*);
+
+read_write_fun *real_read = (read_write_fun*)0x107bddd0;
+read_write_fun *real_write = (read_write_fun*)0x107bdd60;
 
 
 static int read_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
@@ -42,6 +46,8 @@ static int write_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount,
 }
 
 static partition_entry* find_usb_partition(mbr_sector* mbr){
+    if(mbr->boot_signature[0]==0x55 && mbr->boot_signature[0]==0xAA)
+        return NULL;
     for (size_t i = 1; i < MBR_MAX_PARTITIONS; i++){
         if(mbr->partition[i].type == MBR_PARTITION_TYPE_MLC_NOSCFM){
             return mbr->partition+i;
@@ -56,82 +62,90 @@ struct cb_ctx {
 } typedef cb_ctx;
 
 static void read_callback(int res, cb_ctx *ctx){
-    debug_printf("In read_callback(%d,%p)\n", res, ctx);
     ctx->res = res;
     iosSignalSemaphore(ctx->semaphore);
 }
 
-void hook_register_sd(trampoline_state *state){
-    int *server_handle = (int*)state->r[0] -3;
-    debug_printf("SDUSB: org server_handle: %p\n", server_handle);
-    real_read = (void*)server_handle[0x76];
-    real_write = (void*)server_handle[0x78];
-    u8 *buf = iosAllocAligned(LOCAL_HEAP_ID, SECTOR_SIZE, 0x40);
-    if(!buf){
-        debug_printf("SDUSB: Failed to allocate IO buf\n");
-        return;
-    }
 
+static int sync_read(int* server_handle, u32 lba, u32 blkCount, void *buf){
     cb_ctx ctx = {iosCreateSemaphore(1,0)};
     if(ctx.semaphore < 0){
-        debug_printf("SDUSB: Error creating Semaphore: 0x%X\n", ctx.semaphore);
+        debug_printf("%s: Error creating Semaphore: 0x%X\n", MODULE_NAME, ctx.semaphore);
+        return ctx.semaphore;
     }
-
-    debug_printf("Calling sdio_read at %p\n", real_read);
-    int res = real_read(server_handle, 0, 0, 1, SECTOR_SIZE, buf, read_callback, &ctx);
-    debug_printf("sdio_read returned: %u\n", res);
-
-    debug_printf("SDUSB: Waiting for semaphore\n");
-    iosWaitSemaphore(ctx.semaphore, 0);
-
+    int res = ((read_write_fun*)server_handle[0x76])(server_handle, 0, lba, blkCount, SECTOR_SIZE, buf, read_callback, &ctx);
+    if(!res){
+        iosWaitSemaphore(ctx.semaphore, 0);
+        res = ctx.res;
+    }
     iosDestroySemaphore(ctx.semaphore);
+    return res;
+}
 
-    partition_entry *part = find_usb_partition((mbr_sector*)buf);
-
-    if(!part){
-        debug_printf("SDUSB: USB partition not found!!!\n");
-        iosFree(LOCAL_HEAP_ID, buf); // also frees part
-        return;
-    }
-    
-    sdusb_offset = LD_DWORD(part->lba_start);
-    sdusb_size = LD_DWORD(part->lba_length);
-
-    debug_printf("SDUSB: raw part offset: %02X %02X %02X %02X, size: %02X %02X %02X %02X\n", 
-            part->lba_start[0], part->lba_start[1], part->lba_start[2], part->lba_start[3],
-                part->lba_length[0], part->lba_length[1],part->lba_length[2],part->lba_length[3]);
-
-    iosFree(LOCAL_HEAP_ID, buf); // also frees part
-
-    debug_printf("SDUSB: USB partition found %p: offset: %u, size: %u\n", part, sdusb_offset, sdusb_size);
-
-    //print_handles();
-
-    // the virtual USB device has to use the original slot, so the sd goes to the extra slot
-    memcpy(extra_server_handle, server_handle, SERVER_HANDLE_SZ);
-    res = FSSAL_attach_device(extra_server_handle+3);
-    extra_server_handle[0x82] = res;
-
-    int *sdusb_server_handle = server_handle;
-
-    sdusb_server_handle[0x3] = (int) sdusb_server_handle;
+void patch_usb_handle(int* sdusb_server_handle){
+    real_read = (void*)sdusb_server_handle[0x76];
+    real_write = (void*)sdusb_server_handle[0x78];
     sdusb_server_handle[0x76] = (int)read_wrapper;
     sdusb_server_handle[0x78] = (int)write_wrapper;
     sdusb_server_handle[0x5] = DEVTYPE_USB;
     sdusb_server_handle[0xa] = sdusb_size -1;
     sdusb_server_handle[0x1] = sdusb_server_handle[0xe] = sdusb_size;
-
-    //sdusb_attach_device_handle[0x83] = 0xFF;
-
-    //res = FSSAL_attach_device(sdusb_attach_device_handle+3);
-    //sdusb_attach_device_handle[0x82] = res;
-
-    debug_printf("SDUSB: Attached pseudo USB device. res: 0x%X\n", res);
 }
+
+void clone_patch_attach_usb_hanlde(int* server_handle){
+    memcpy(extra_server_handle, server_handle, SERVER_HANDLE_SZ);
+    patch_usb_handle(server_handle);
+    // somehow it doesn't work if we fix the handle pointer
+    //extra_server_handle[0x3] = (int) extra_server_handle;
+    int res = FSSAL_attach_device(extra_server_handle+3);
+    extra_server_handle[0x82] = res;
+    debug_printf("SDUSB: Attached extra handle. res: 0x%X\n", res);
+}
+
+int read_usb_partition_from_mbr(int* server_handle, u32* out_offset, u32* out_size){
+    mbr_sector *mbr = iosAllocAligned(LOCAL_HEAP_ID, SECTOR_SIZE, 0x40);
+    if(!mbr){
+        debug_printf("%s: Failed to allocate IO buf\n", MODULE_NAME);
+        return -1;
+    }
+    int ret = -2;
+    int res = sync_read(server_handle, 0, 1, mbr);
+    if(res)
+        goto out_free;
+
+    partition_entry *part = find_usb_partition(mbr);
+    if(!part){
+        debug_printf("%s: USB partition not found!!!\n", MODULE_NAME);
+        ret = 0;
+        goto out_free;
+    }
+    ret = 1;
+    *out_offset = LD_DWORD(part->lba_start);
+    *out_size = LD_DWORD(part->lba_length);
+    debug_printf("%s: USB partition found %p: offset: %u, size: %u\n", MODULE_NAME, part, *out_offset, *out_size);
+
+out_free:
+    iosFree(LOCAL_HEAP_ID, mbr); // also frees part
+    return ret;
+}
+
+void hook_register_sd(trampoline_state *state){
+    int *server_handle = (int*)state->r[0] -3;
+    debug_printf("%s: org server_handle: %p\n", MODULE_NAME, server_handle);
+
+    int res = read_usb_partition_from_mbr(server_handle, &sdusb_offset, &sdusb_size);
+    if(res<=0)
+        return;
+
+    // the virtual USB device has to use the original slot, so the sd goes to the extra slot
+    clone_patch_attach_usb_hanlde(server_handle);
+}
+
 
 void crypto_hook(trampoline_state* state){
     if(state->r[5] == sdusb_size){
         //debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
+        // tells crypto to not do crypto (depends on stroopwafel patch)
         state->r[0] = 0xDEADBEEF;
     }
 }
