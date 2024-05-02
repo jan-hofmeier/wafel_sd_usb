@@ -11,7 +11,7 @@
 #include "mbr.h"
 
 #define SECTOR_SIZE 512
-#define HEAP_ID 0xCAFF
+#define LOCAL_HEAP_ID 0xCAFE
 #define DEVTYPE_USB 17
 
 #define SERVER_HANDLE_LEN 0xb5
@@ -80,7 +80,7 @@ void hook_register_sd(trampoline_state *state){
     debug_printf("SDUSB: org server_handle: %p\n", server_handle);
     real_read = (void*)server_handle[0x76];
     real_write = (void*)server_handle[0x78];
-    u8 *buf = iosAllocAligned(HEAP_ID, SECTOR_SIZE, 0x40);
+    u8 *buf = iosAllocAligned(LOCAL_HEAP_ID, SECTOR_SIZE, 0x40);
     if(!buf){
         debug_printf("SDUSB: Failed to allocate IO buf\n");
         return;
@@ -112,7 +112,7 @@ void hook_register_sd(trampoline_state *state){
 
     if(!part){
         debug_printf("SDUSB: USB partition not found!!!\n");
-        iosFree(HEAP_ID, buf); // also frees part
+        iosFree(LOCAL_HEAP_ID, buf); // also frees part
         return;
     }
     
@@ -123,12 +123,13 @@ void hook_register_sd(trampoline_state *state){
             part->lba_start[0], part->lba_start[1], part->lba_start[2], part->lba_start[3],
                 part->lba_length[0], part->lba_length[1],part->lba_length[2],part->lba_length[3]);
 
-    iosFree(HEAP_ID, buf); // also frees part
+    iosFree(LOCAL_HEAP_ID, buf); // also frees part
 
     debug_printf("SDUSB: USB partition found %p: offset: %u, size: %u\n", part, sdusb_offset, sdusb_size);
 
     //print_handles();
 
+    // the virtual USB device has to use the original slot, so the sd goes to the extra slot
     memcpy(extra_server_handle, server_handle, SERVER_HANDLE_SZ);
     res = FSSAL_attach_device(extra_server_handle+3);
     extra_server_handle[0x82] = res;
