@@ -159,18 +159,10 @@ int replace_register_sd(int *attach_arg, int r1, int r2, int r3, int(*sal_attach
 }
 
 void crypto_hook(trampoline_state* state){
-    //debug_printf("SDUSB: Inside cypto hook\n");
     if(state->r[5] == sdusb_size){
-        debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
+        //debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
         state->r[0] = 0xDEADBEEF;
-        // // lr was overwritten by bl
-        // u32** lr = *(u32***)(state->r[6] + 0x1c);  //ldr  lr,[r6,#0x1c]
-        // debug_printf("SDUSB lr: %p\n", lr);
-        // u32* r4 = lr[0x24/4]; //ldr r4, [lr, #0x24]
-        // *r4 = 0xDEADBEEF; // str r5, [r4]
-        debug_printf("SDUSB: crypto hook END\n");
     }
-    //debug_printf("SDUSB: crypto hook END");
 }
 
 void crypto_disable_hook(trampoline_state *state){
@@ -198,8 +190,8 @@ void kern_main()
     //trampoline_blreplace(0x107bd9a4, replace_register_sd);
     trampoline_hook_before(0x10740f48, crypto_hook); // hook decrypt call
     trampoline_hook_before(0x10740fe8, crypto_hook); // hook encrypt call
-    trampoline_hook_before(0x04002EE8, crypto_disable_hook);
-    trampoline_hook_before(0x040032A0, crypto_disable_hook);
+    //trampoline_hook_before(0x04002EE8, crypto_disable_hook);
+    //trampoline_hook_before(0x040032A0, crypto_disable_hook);
 
 }
 
