@@ -33,20 +33,6 @@ static int (*real_read)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)
 static int (*real_write)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)0x107bdd60;
 
 
-int print_handles(){
-    for(int* handle = FIRST_HANDLE; handle<HANDLE_END; handle+=SERVER_HANDLE_LEN){
-        debug_printf("SDUSB: Server handle %p:\n", handle);
-        if(!*handle){
-            debug_printf("(unused)\n");
-            continue;
-        }
-        for(int i=0; i<SERVER_HANDLE_LEN; i++){
-            debug_printf("%02X: %08X\n", i, handle[i]);
-        }
-    }
-}
-
-
 static int read_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
     return real_read(device_handle, lba_hi, lba + sdusb_offset, blkCount, blockSize, buf, cb, cb_ctx);
 }
@@ -100,14 +86,6 @@ void hook_register_sd(trampoline_state *state){
 
     iosDestroySemaphore(ctx.semaphore);
 
-    debug_printf("read_buff at %p:", buf);
-    for(int i=0; i<SECTOR_SIZE; i++){
-        if(i%32 == 0)
-            debug_printf("\n");
-        debug_printf("%02X ", buf[i]);
-    }
-    debug_printf("\n");
-
     partition_entry *part = find_usb_partition((mbr_sector*)buf);
 
     if(!part){
@@ -151,26 +129,12 @@ void hook_register_sd(trampoline_state *state){
     debug_printf("SDUSB: Attached pseudo USB device. res: 0x%X\n", res);
 }
 
-int replace_register_sd(int *attach_arg, int r1, int r2, int r3, int(*sal_attach)(int*)){
-    int *last_server_hanlde = (int*)0x11c3a420-SERVER_HANDLE_LEN;
-    memcpy(last_server_hanlde, attach_arg -3, SERVER_HANDLE_SZ);
-    last_server_hanlde[0x3] = (int) last_server_hanlde;
-    last_server_hanlde[0x82] = sal_attach(last_server_hanlde +3);
-    return sal_attach(attach_arg);
-}
-
 void crypto_hook(trampoline_state* state){
     if(state->r[5] == sdusb_size){
         //debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
         state->r[0] = 0xDEADBEEF;
     }
 }
-
-void crypto_disable_hook(trampoline_state *state){
-    if(*(u32*)(state->r[7]+12) == 0xDEADBEEF)
-        debug_printf("SDUSB: found DEADBEEF, lr: %p\n",state->lr);
-}
-
 
 // This fn runs before everything else in kernel mode.
 // It should be used to do extremely early patches
@@ -184,16 +148,9 @@ void kern_main()
 
     debug_printf("init_linking symbol at: %08x\n", wafel_find_symbol("init_linking"));
 
-    //ASM_PATCH_K(0x107bd98c, "cmp r3,#17");
-    //ASM_PATCH_K(0x107BD87C, "mov r3,#17");
-    //ASM_PATCH_K(0x107bd9a4, "nop");
     trampoline_hook_before(0x107bd9a4, hook_register_sd);
-    //trampoline_blreplace(0x107bd9a4, replace_register_sd);
     trampoline_hook_before(0x10740f48, crypto_hook); // hook decrypt call
     trampoline_hook_before(0x10740fe8, crypto_hook); // hook encrypt call
-    //trampoline_hook_before(0x04002EE8, crypto_disable_hook);
-    //trampoline_hook_before(0x040032A0, crypto_disable_hook);
-
 }
 
 // This fn runs before MCP's main thread, and can be used
