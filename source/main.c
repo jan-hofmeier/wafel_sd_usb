@@ -24,7 +24,7 @@ static int (*FSSAL_attach_device)(int*) = (void*)0x10733aa4;
 #define FIRST_HANDLE ((int*)0x11c39e78)
 #define HANDLE_END ((int*)0x11c3a420)
 
-int extra_device_handle[SERVER_HANDLE_LEN]; // = HANDLE_END-SERVER_HANDLE_LEN;
+int extra_server_handle[SERVER_HANDLE_LEN]; // = HANDLE_END-SERVER_HANDLE_LEN;
 
 static u32 sdusb_offset = 0xFFFFFFF;
 static u32 sdusb_size = 0xFFFFFFFF;
@@ -129,9 +129,9 @@ void hook_register_sd(trampoline_state *state){
 
     //print_handles();
 
-    memcpy(extra_device_handle, server_handle, SERVER_HANDLE_SZ);
-    res = FSSAL_attach_device(extra_device_handle+3);
-    extra_device_handle[0x82] = res;
+    memcpy(extra_server_handle, server_handle, SERVER_HANDLE_SZ);
+    res = FSSAL_attach_device(extra_server_handle+3);
+    extra_server_handle[0x82] = res;
 
     int *sdusb_server_handle = server_handle;
 
