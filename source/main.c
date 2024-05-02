@@ -26,7 +26,9 @@ static int (*FSSAL_attach_device)(int*) = (void*)0x10733aa4;
 
 int extra_device_handle[SERVER_HANDLE_LEN]; // = HANDLE_END-SERVER_HANDLE_LEN;
 
-static u32 sdusb_offset = 0xFFF;
+static u32 sdusb_offset = 0xFFFFFFF;
+static u32 sdusb_size = 0xFFFFFFFF;
+
 static int (*real_read)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)0x107bddd0;
 static int (*real_write)(int*, u32, u32, u32, u32, void*, void*, void*) = (void*)0x107bdd60;
 
@@ -115,7 +117,7 @@ void hook_register_sd(trampoline_state *state){
     }
     
     sdusb_offset = LD_DWORD(part->lba_start);
-    u32 size = LD_DWORD(part->lba_length);
+    sdusb_size = LD_DWORD(part->lba_length);
 
     debug_printf("SDUSB: raw part offset: %02X %02X %02X %02X, size: %02X %02X %02X %02X\n", 
             part->lba_start[0], part->lba_start[1], part->lba_start[2], part->lba_start[3],
@@ -123,7 +125,7 @@ void hook_register_sd(trampoline_state *state){
 
     iosFree(HEAP_ID, buf); // also frees part
 
-    debug_printf("SDUSB: USB partition found %p: offset: %u, size: %u\n", part, sdusb_offset, size);
+    debug_printf("SDUSB: USB partition found %p: offset: %u, size: %u\n", part, sdusb_offset, sdusb_size);
 
     //print_handles();
 
@@ -137,8 +139,8 @@ void hook_register_sd(trampoline_state *state){
     sdusb_server_handle[0x76] = (int)read_wrapper;
     sdusb_server_handle[0x78] = (int)write_wrapper;
     sdusb_server_handle[0x5] = DEVTYPE_USB;
-    sdusb_server_handle[0xa] = size -1;
-    sdusb_server_handle[0x1] =sdusb_server_handle[0xe] = size;
+    sdusb_server_handle[0xa] = sdusb_size -1;
+    sdusb_server_handle[0x1] = sdusb_server_handle[0xe] = sdusb_size;
 
     //sdusb_attach_device_handle[0x83] = 0xFF;
 
@@ -154,6 +156,26 @@ int replace_register_sd(int *attach_arg, int r1, int r2, int r3, int(*sal_attach
     last_server_hanlde[0x3] = (int) last_server_hanlde;
     last_server_hanlde[0x82] = sal_attach(last_server_hanlde +3);
     return sal_attach(attach_arg);
+}
+
+void crypto_hook(trampoline_state* state){
+    //debug_printf("SDUSB: Inside cypto hook\n");
+    if(state->r[5] == sdusb_size){
+        debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
+        state->r[0] = 0xDEADBEEF;
+        // // lr was overwritten by bl
+        // u32** lr = *(u32***)(state->r[6] + 0x1c);  //ldr  lr,[r6,#0x1c]
+        // debug_printf("SDUSB lr: %p\n", lr);
+        // u32* r4 = lr[0x24/4]; //ldr r4, [lr, #0x24]
+        // *r4 = 0xDEADBEEF; // str r5, [r4]
+        debug_printf("SDUSB: crypto hook END\n");
+    }
+    //debug_printf("SDUSB: crypto hook END");
+}
+
+void crypto_disable_hook(trampoline_state *state){
+    if(*(u32*)(state->r[7]+12) == 0xDEADBEEF)
+        debug_printf("SDUSB: found DEADBEEF, lr: %p\n",state->lr);
 }
 
 
@@ -174,6 +196,10 @@ void kern_main()
     //ASM_PATCH_K(0x107bd9a4, "nop");
     trampoline_hook_before(0x107bd9a4, hook_register_sd);
     //trampoline_blreplace(0x107bd9a4, replace_register_sd);
+    trampoline_hook_before(0x10740f48, crypto_hook); // hook decrypt call
+    trampoline_hook_before(0x10740fe8, crypto_hook); // hook encrypt call
+    trampoline_hook_before(0x04002EE8, crypto_disable_hook);
+    trampoline_hook_before(0x040032A0, crypto_disable_hook);
 
 }
 
