@@ -143,7 +143,8 @@ void hook_register_sd(trampoline_state *state){
 
 
 void crypto_hook(trampoline_state* state){
-    if(state->r[5] == sdusb_size){
+    // hope that 0x11 stays constant for mlc
+    if(state->r[5] == sdusb_size && state->r[0] != 0x11){
         //debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
         // tells crypto to not do crypto (depends on stroopwafel patch)
         state->r[0] = 0xDEADBEEF;
