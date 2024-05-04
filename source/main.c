@@ -164,6 +164,7 @@ void hook_register_sd(trampoline_state *state){
 
     // the virtual USB device has to use the original slot, so the sd goes to the extra slot
     clone_patch_attach_usb_hanlde(server_handle);
+    apply_hai_patches();
 }
 
 
