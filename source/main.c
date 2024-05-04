@@ -145,13 +145,18 @@ void hai_ios_patches(trampoline_t_state *s){
         hai_redirect_mlc2sd();
 }
 
+int hai_path_sprintf_hook(char* parm1, char* parm2, char *fmt, char *dev, int (*sprintf)(char*, char*, char*, char*, char*), int lr, char *companion_file ){
+    return sprintf(parm1, parm2, fmt, "mlc", companion_file);
+}
+
 void apply_hai_patches(void){
     hai_apply_getdev_patch();
     trampoline_t_hook_before(0x050078AE, hai_write_file_patch);
     //apply patches to HAI IOS just before it gets launched
     trampoline_t_hook_before(0x0500881e, hai_ios_patches);
     //force device in hai parm to MLC
-    ASM_T_PATCH_K(0x05100198, "nop");
+    trampoline_t_blreplace(0x051001d6, hai_path_sprintf_hook);
+    //ASM_T_PATCH_K(0x05100198, "nop");
 }
 
 void hook_register_sd(trampoline_state *state){
