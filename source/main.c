@@ -150,7 +150,6 @@ int hai_path_sprintf_hook(char* parm1, char* parm2, char *fmt, char *dev, int (*
 }
 
 void apply_hai_patches(void){
-    hai_apply_getdev_patch();
     trampoline_t_hook_before(0x050078AE, hai_write_file_patch);
     //apply patches to HAI IOS just before it gets launched
     trampoline_t_hook_before(0x0500881e, hai_ios_patches);
@@ -219,6 +218,9 @@ void kern_main()
     trampoline_hook_before(0x107bd9a4, hook_register_sd);
     trampoline_hook_before(0x10740f48, crypto_hook); // hook decrypt call
     trampoline_hook_before(0x10740fe8, crypto_hook); // hook encrypt call
+
+    // somehow it causes crashes when applied from the attach hook
+    hai_apply_getdev_patch();
 
     debug_printf("%s: patches applied\n", MODULE_NAME);
 
