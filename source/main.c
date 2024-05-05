@@ -36,8 +36,10 @@ static u32 sdusb_size = 0xFFFFFFFF;
 
 typedef int read_write_fun(int*, u32, u32, u32, u32, void*, void*, void*);
 
-read_write_fun *real_read = (read_write_fun*)0x107bddd0;
-read_write_fun *real_write = (read_write_fun*)0x107bdd60;
+static read_write_fun *real_read = (read_write_fun*)0x107bddd0;
+static read_write_fun *real_write = (read_write_fun*)0x107bdd60;
+
+bool active = false;
 
 
 static int read_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
@@ -135,22 +137,25 @@ out_free:
 void hai_write_file_patch(trampoline_t_state *s){
     uint32_t *buffer = (uint32_t*)s->r[1];
     debug_printf("HAI WRITE COMPANION\n");
-    if(hai_getdev() == DEVTYPE_USB){
+    if(active && hai_getdev() == DEVTYPE_USB){
         hai_companion_add_offset(buffer, sdusb_offset);
     }
 }
 
 void hai_ios_patches(trampoline_t_state *s){
-    if(hai_getdev() == DEVTYPE_USB)
+    if(active && hai_getdev() == DEVTYPE_USB)
         hai_redirect_mlc2sd();
 }
 
 int hai_path_sprintf_hook(char* parm1, char* parm2, char *fmt, char *dev, int (*sprintf)(char*, char*, char*, char*, char*), int lr, char *companion_file ){
-    return sprintf(parm1, parm2, fmt, "mlc", companion_file);
+    if(active)
+        dev = "mlc";
+    return sprintf(parm1, parm2, fmt, dev, companion_file);
 }
 
 void apply_hai_patches(void){
     trampoline_t_hook_before(0x050078AE, hai_write_file_patch);
+    hai_apply_getdev_patch();
     //apply patches to HAI IOS just before it gets launched
     trampoline_t_hook_before(0x0500881e, hai_ios_patches);
     //force device in hai parm to MLC
@@ -166,15 +171,16 @@ void hook_register_sd(trampoline_state *state){
     if(res<=0)
         return;
 
+    active = true;
+
     // the virtual USB device has to use the original slot, so the sd goes to the extra slot
     clone_patch_attach_usb_hanlde(server_handle);
-    apply_hai_patches();
 }
 
 
 void crypto_hook(trampoline_state* state){
     // hope that 0x11 stays constant for mlc
-    if(state->r[5] == sdusb_size && state->r[0] != 0x11){
+    if(active && state->r[5] == sdusb_size && state->r[0] != 0x11){
         //debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
         // tells crypto to not do crypto (depends on stroopwafel patch)
         state->r[0] = 0xDEADBEEF;
@@ -220,7 +226,7 @@ void kern_main()
     trampoline_hook_before(0x10740fe8, crypto_hook); // hook encrypt call
 
     // somehow it causes crashes when applied from the attach hook
-    hai_apply_getdev_patch();
+    apply_hai_patches();
 
     debug_printf("%s: patches applied\n", MODULE_NAME);
 
