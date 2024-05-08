@@ -186,7 +186,7 @@ void crypto_hook(trampoline_state* state){
     if(active && state->r[5] == sdusb_size && state->r[0] != MLC_CRYPTO_HANDLE){
         //debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
 #ifdef USE_MLC_KEY
-        tate->r[0] = MLC_CRYPTO_HANDLE;
+        state->r[0] = MLC_CRYPTO_HANDLE;
 #else     
         state->r[0] = NO_CRYPTO_HANDLE;
 #endif
