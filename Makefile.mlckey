@@ -14,7 +14,7 @@ include $(MAKEFILE_ROOT_DIR)/elf_rules
 # INCLUDES is a list of directories containing header files
 # SPECS is the directory containing the important build and link files
 #---------------------------------------------------------------------------------
-export TARGET		:=	wafel_sd_usb
+export TARGET		:=	wafel_sd_usb_mlckey
 export BUILD		?=	debug
 
 R_SOURCES			:=	
@@ -34,7 +34,7 @@ CFLAGS			:=	-g -std=c11 -Os \
 					-fomit-frame-pointer -fdata-sections -ffunction-sections \
 					$(ARCH) -nostartfiles
 
-CFLAGS			+=	$(INCLUDE) -D_GNU_SOURCE -fno-builtin-printf -Wno-nonnull -Werror=implicit
+CFLAGS			+=	$(INCLUDE) -D_GNU_SOURCE -fno-builtin-printf -Wno-nonnull -Werror=implicit -DUSE_MLC_KEY
 
 CXXFLAGS		:=	$(CFLAGS) -fno-rtti -fno-exceptions
 

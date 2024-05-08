@@ -18,6 +18,10 @@ const char* MODULE_NAME = "SDUSB";
 #define SECTOR_SIZE 512
 #define LOCAL_HEAP_ID 0xCAFE
 #define DEVTYPE_USB 17
+// hope that 0x11 stays constant for mlc
+#define MLC_CRYPTO_HANDLE 0x11
+// tells crypto to not do crypto (depends on stroopwafel patch)
+#define NO_CRYPTO_HANDLE 0xDEADBEEF
 
 #define SERVER_HANDLE_LEN 0xb5
 #define SERVER_HANDLE_SZ (SERVER_HANDLE_LEN * sizeof(int))
@@ -179,11 +183,13 @@ void hook_register_sd(trampoline_state *state){
 
 
 void crypto_hook(trampoline_state* state){
-    // hope that 0x11 stays constant for mlc
-    if(active && state->r[5] == sdusb_size && state->r[0] != 0x11){
+    if(active && state->r[5] == sdusb_size && state->r[0] != MLC_CRYPTO_HANDLE){
         //debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
-        // tells crypto to not do crypto (depends on stroopwafel patch)
-        state->r[0] = 0xDEADBEEF;
+#ifdef USE_MLC_KEY
+        tate->r[0] = MLC_CRYPTO_HANDLE;
+#else     
+        state->r[0] = NO_CRYPTO_HANDLE;
+#endif
     }
     //debug_printf("crypto_hook: r0: %p, r1: %p, r2: %p, r3: %p, r4: %p, r5: %p, r6: %p, r7: %p, r8: %p, r9: %p, r10: %p, r11: %p, r12: %p, lr: %p\n",
     //        state->r[0],state->r[1],state->r[2],state->r[3],state->r[4],state->r[5],state->r[6],state->r[7],state->r[8],state->r[9],state->r[10],state->r[11], state->r[12], state->lr);
