@@ -18,8 +18,7 @@ const char* MODULE_NAME = "SDUSB";
 #define SECTOR_SIZE 512
 #define LOCAL_HEAP_ID 0xCAFE
 #define DEVTYPE_USB 17
-// hope that 0x11 stays constant for mlc
-#define MLC_CRYPTO_HANDLE 0x11
+
 // tells crypto to not do crypto (depends on stroopwafel patch)
 #define NO_CRYPTO_HANDLE 0xDEADBEEF
 
@@ -37,6 +36,13 @@ int extra_server_handle[SERVER_HANDLE_LEN]; // = HANDLE_END-SERVER_HANDLE_LEN;
 
 static u32 sdusb_offset = 0xFFFFFFF;
 static u32 sdusb_size = 0xFFFFFFFF;
+
+#ifdef USE_MLC_KEY
+u32 mlc_size_sectors = 0;
+#endif
+
+static volatile bool learn_mlc_crypto_handle = false;
+static volatile bool learn_usb_crypto_handle = false;
 
 typedef int read_write_fun(int*, u32, u32, u32, u32, void*, void*, void*);
 
@@ -103,9 +109,10 @@ void patch_usb_handle(int* sdusb_server_handle){
 
 void clone_patch_attach_usb_hanlde(int* server_handle){
     memcpy(extra_server_handle, server_handle, SERVER_HANDLE_SZ);
-    patch_usb_handle(server_handle);
+    patch_usb_handle(extra_server_handle);
     // somehow it doesn't work if we fix the handle pointer
     //extra_server_handle[0x3] = (int) extra_server_handle;
+    learn_usb_crypto_handle = true;
     int res = FSSAL_attach_device(extra_server_handle+3);
     extra_server_handle[0x82] = res;
     debug_printf("SDUSB: Attached extra handle. res: 0x%X\n", res);
@@ -181,23 +188,40 @@ void hook_register_sd(trampoline_state *state){
     clone_patch_attach_usb_hanlde(server_handle);
 }
 
-
-void crypto_hook(trampoline_state* state){
-    if(active && state->r[5] == sdusb_size && state->r[0] != MLC_CRYPTO_HANDLE){
-        //debug_printf("SDUSB: cryptohook detected USB partition true lr: %p\n", state->lr);
 #ifdef USE_MLC_KEY
-        state->r[0] = MLC_CRYPTO_HANDLE;
-#else     
-        state->r[0] = NO_CRYPTO_HANDLE;
-#endif
-    }
-    //debug_printf("crypto_hook: r0: %p, r1: %p, r2: %p, r3: %p, r4: %p, r5: %p, r6: %p, r7: %p, r8: %p, r9: %p, r10: %p, r11: %p, r12: %p, lr: %p\n",
-    //        state->r[0],state->r[1],state->r[2],state->r[3],state->r[4],state->r[5],state->r[6],state->r[7],state->r[8],state->r[9],state->r[10],state->r[11], state->r[12], state->lr);
+int mlc_attach_hook(int* attach_arg, int r1, int r2, int r3, int (*attach_fun)(int*)){
+    mlc_size_sectors = attach_arg[0xe - 3];
+    learn_mlc_crypto_handle = true;
+    return attach_fun(attach_arg);
 }
+#endif
 
-// int crypto_disable_hook(int r0, int r1, u32 r2, u32 r3, int (*dencrypt_async)(int, int, u32, u32, int, u32, int, int, int), int arg5, u32 arg6, int arg7, int arg8, int arg9){
+static void crypto_hook(trampoline_state *state){
+#ifdef USE_MLC_KEY
+    static u32 mlc_crypto_handle = 0;
+    if(learn_mlc_crypto_handle && state->r[5] == mlc_size_sectors){
+        learn_mlc_crypto_handle = false;
+        mlc_crypto_handle = state->r[0];
+        debug_printf("%s: learned mlc crypto handle: 0x%X\n", MODULE_NAME, mlc_crypto_handle);
+    }
+#endif
 
-// }
+    static u32 usb_crypto_handle = 0;
+    if(state->r[5] == sdusb_size){
+        if(learn_usb_crypto_handle){
+            learn_usb_crypto_handle = false;
+            usb_crypto_handle = state->r[0];
+            debug_printf("%s: learned mlc crypto handle: 0x%X\n", MODULE_NAME,  usb_crypto_handle);
+        }
+        if(usb_crypto_handle == state->r[0]){
+#ifdef USE_MLC_KEY
+            state->r[0] = mlc_crypto_handle;
+#else     
+            state->r[0] = NO_CRYPTO_HANDLE;
+#endif
+        }
+    }
+}
 
 void test_hook(trampoline_state* state){
     int *data = (int*)state->r[2];
@@ -230,6 +254,10 @@ void kern_main()
     trampoline_hook_before(0x107bd9a4, hook_register_sd);
     trampoline_hook_before(0x10740f48, crypto_hook); // hook decrypt call
     trampoline_hook_before(0x10740fe8, crypto_hook); // hook encrypt call
+
+#ifdef USE_MLC_KEY
+    trampoline_blreplace(0x107bdae0, mlc_attach_hook);
+#endif
 
     // somehow it causes crashes when applied from the attach hook
     apply_hai_patches();
