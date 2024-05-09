@@ -246,7 +246,7 @@ void kern_main()
     size_t rednand_conf_size;
     if(!prsh_get_entry("rednand", (void**)&rednand_conf, &rednand_conf_size)){
         if(rednand_conf_size<sizeof(rednand_config_v1) || rednand_conf->mlc.lba_length){
-            debug_printf("%s: detected MLC redurection, %s will be disabled\n", MODULE_NAME, MODULE_NAME);
+            debug_printf("%s: detected MLC redirection, %s will be disabled\n", MODULE_NAME, MODULE_NAME);
             return;
         }
     }
