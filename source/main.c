@@ -238,7 +238,7 @@ __attribute__((target("arm")))
 void kern_main()
 {
     // Make sure relocs worked fine and mappings are good
-    debug_printf("we in here trampoline demo plugin kern %p\n", kern_main);
+    debug_printf("we in here %s plugin kern %p\n", MODULE_NAME, kern_main);
 
     debug_printf("init_linking symbol at: %08x\n", wafel_find_symbol("init_linking"));
 
