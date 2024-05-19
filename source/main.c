@@ -61,7 +61,7 @@ static int write_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount,
 }
 
 static partition_entry* find_usb_partition(mbr_sector* mbr){
-    if(mbr->boot_signature[0]==0x55 && mbr->boot_signature[0]==0xAA)
+    if(mbr->boot_signature!=0x55AA)
         return NULL;
     for (size_t i = 1; i < MBR_MAX_PARTITIONS; i++){
         if(mbr->partition[i].type == MBR_PARTITION_TYPE_MLC_NOSCFM){
