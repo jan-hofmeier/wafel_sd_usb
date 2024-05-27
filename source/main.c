@@ -12,6 +12,7 @@
 #include "wafel/hai.h"
 #include "mbr.h"
 #include "rednand_config.h"
+#include "sal.h"
 
 const char* MODULE_NAME = "SDUSB";
 
@@ -22,17 +23,13 @@ const char* MODULE_NAME = "SDUSB";
 // tells crypto to not do crypto (depends on stroopwafel patch)
 #define NO_CRYPTO_HANDLE 0xDEADBEEF
 
-#define SERVER_HANDLE_LEN 0xb5
-#define SERVER_HANDLE_SZ (SERVER_HANDLE_LEN * sizeof(int))
-
 #define LD_DWORD(ptr)       (u32)(((u32)*((u8*)(ptr)+3)<<24)|((u32)*((u8*)(ptr)+2)<<16)|((u16)*((u8*)(ptr)+1)<<8)|*(u8*)(ptr))
 
-static int (*FSSAL_attach_device)(int*) = (void*)0x10733aa4;
 
 #define FIRST_HANDLE ((int*)0x11c39e78)
 #define HANDLE_END ((int*)0x11c3a420)
 
-int extra_server_handle[SERVER_HANDLE_LEN]; // = HANDLE_END-SERVER_HANDLE_LEN;
+FSSALAttachDeviceArg extra_attach_arg;
 
 static u32 sdusb_offset = 0xFFFFFFF;
 static u32 sdusb_size = 0xFFFFFFFF;
@@ -44,20 +41,34 @@ u32 mlc_size_sectors = 0;
 static volatile bool learn_mlc_crypto_handle = false;
 static volatile bool learn_usb_crypto_handle = false;
 
-typedef int read_write_fun(int*, u32, u32, u32, u32, void*, void*, void*);
-
-static read_write_fun *real_read = (read_write_fun*)0x107bddd0;
-static read_write_fun *real_write = (read_write_fun*)0x107bdd60;
+static read_func *real_read;
+static write_func *real_write;
+static sync_func *real_sync;
 
 bool active = false;
 
 
-static int read_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
-    return real_read(device_handle, lba_hi, lba + sdusb_offset, blkCount, blockSize, buf, cb, cb_ctx);
+#define ADD_OFFSET(high, low) do { \
+    unsigned long long combined = ((unsigned long long)(high) << 32) | (low); \
+    combined += sdusb_offset; \
+    (high) = (unsigned int)(combined >> 32); \
+    (low) = (unsigned int)(combined & 0xFFFFFFFF); \
+} while (0)
+
+int read_wrapper(void *device_handle, u32 lba_hi, u32 lba_lo, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
+    ADD_OFFSET(lba_hi, lba_lo);
+    return real_read(device_handle, lba_hi, lba_lo, blkCount, blockSize, buf, cb, cb_ctx);
 }
 
-static int write_wrapper(void *device_handle, u32 lba_hi, u32 lba, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
-    return real_write(device_handle, lba_hi, lba + sdusb_offset, blkCount, blockSize, buf, cb, cb_ctx);
+int write_wrapper(void *device_handle, u32 lba_hi, u32 lba_lo, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
+    ADD_OFFSET(lba_hi, lba_lo);
+    return real_write(device_handle, lba_hi, lba_lo, blkCount, blockSize, buf, cb, cb_ctx);
+}
+
+int sync_wrapper(int server_handle, u32 lba_hi, u32 lba_lo, u32 num_blocks, void * cb, void * cb_ctx){
+    ADD_OFFSET(lba_hi, lba_lo);
+    //debug_printf("%s: sync called lba: %d, num_blocks: %d\n", MODULE_NAME, lba_lo, num_blocks);
+    return real_sync(server_handle, lba_hi, lba_lo, num_blocks, cb, cb_ctx);
 }
 
 static partition_entry* find_usb_partition(mbr_sector* mbr){
@@ -82,13 +93,13 @@ static void read_callback(int res, cb_ctx *ctx){
 }
 
 
-static int sync_read(int* server_handle, u32 lba, u32 blkCount, void *buf){
+static int sync_read(FSSALAttachDeviceArg* attach_arg, u64 lba, u32 blkCount, void *buf){
     cb_ctx ctx = {iosCreateSemaphore(1,0)};
     if(ctx.semaphore < 0){
         debug_printf("%s: Error creating Semaphore: 0x%X\n", MODULE_NAME, ctx.semaphore);
         return ctx.semaphore;
     }
-    int res = ((read_write_fun*)server_handle[0x76])(server_handle, 0, lba, blkCount, SECTOR_SIZE, buf, read_callback, &ctx);
+    int res = attach_arg->op_read(attach_arg->server_handle, lba>>32, lba, blkCount, SECTOR_SIZE, buf, read_callback, &ctx);
     if(!res){
         iosWaitSemaphore(ctx.semaphore, 0);
         res = ctx.res;
@@ -97,35 +108,38 @@ static int sync_read(int* server_handle, u32 lba, u32 blkCount, void *buf){
     return res;
 }
 
-void patch_usb_handle(int* sdusb_server_handle){
-    real_read = (void*)sdusb_server_handle[0x76];
-    real_write = (void*)sdusb_server_handle[0x78];
-    sdusb_server_handle[0x76] = (int)read_wrapper;
-    sdusb_server_handle[0x78] = (int)write_wrapper;
-    sdusb_server_handle[0x5] = DEVTYPE_USB;
-    sdusb_server_handle[0xa] = sdusb_size -1;
-    sdusb_server_handle[0x1] = sdusb_server_handle[0xe] = sdusb_size;
+void patch_usb_attach_arg(FSSALAttachDeviceArg *attach_arg){
+    real_read = attach_arg->op_read;
+    real_write = attach_arg->op_write;
+    real_sync = attach_arg->opsync;
+    attach_arg->op_read = read_wrapper;
+    attach_arg->op_write = write_wrapper;
+    attach_arg->op_read2 = crash_and_burn;
+    attach_arg->op_write2 = crash_and_burn;
+    attach_arg->opsync = sync_wrapper;
+    attach_arg->params.device_type = DEVTYPE_USB;
+    attach_arg->params.max_lba_size = sdusb_size -1;
+    attach_arg->params.block_count = sdusb_size;
 }
 
-void clone_patch_attach_usb_hanlde(int* server_handle){
-    memcpy(extra_server_handle, server_handle, SERVER_HANDLE_SZ);
-    patch_usb_handle(extra_server_handle);
+void clone_patch_attach_usb_hanlde(FSSALAttachDeviceArg *attach_arg){
+    memcpy(&extra_attach_arg, attach_arg, sizeof(extra_attach_arg));
+    patch_usb_attach_arg(&extra_attach_arg);
     // somehow it doesn't work if we fix the handle pointer
     //extra_server_handle[0x3] = (int) extra_server_handle;
     learn_usb_crypto_handle = true;
-    int res = FSSAL_attach_device(extra_server_handle+3);
-    extra_server_handle[0x82] = res;
+    int res = FSSAL_attach_device(&extra_attach_arg);
     debug_printf("SDUSB: Attached extra handle. res: 0x%X\n", res);
 }
 
-int read_usb_partition_from_mbr(int* server_handle, u32* out_offset, u32* out_size){
-    mbr_sector *mbr = iosAllocAligned(LOCAL_HEAP_ID, SECTOR_SIZE, 0x40);
+int read_usb_partition_from_mbr(FSSALAttachDeviceArg *attach_arg, u32* out_offset, u32* out_size){
+    mbr_sector *mbr = iosAllocAligned(LOCAL_HEAP_ID, attach_arg->params.block_size, 0x40);
     if(!mbr){
         debug_printf("%s: Failed to allocate IO buf\n", MODULE_NAME);
         return -1;
     }
     int ret = -2;
-    int res = sync_read(server_handle, 0, 1, mbr);
+    int res = sync_read(attach_arg, 0, 1, mbr);
     if(res)
         goto out_free;
 
@@ -175,17 +189,16 @@ void apply_hai_patches(void){
 }
 
 void hook_register_sd(trampoline_state *state){
-    int *server_handle = (int*)state->r[0] -3;
-    debug_printf("%s: org server_handle: %p\n", MODULE_NAME, server_handle);
+    FSSALAttachDeviceArg *attach_arg = (FSSALAttachDeviceArg*)state->r[0];
 
-    int res = read_usb_partition_from_mbr(server_handle, &sdusb_offset, &sdusb_size);
+    int res = read_usb_partition_from_mbr(attach_arg, &sdusb_offset, &sdusb_size);
     if(res<=0)
         return;
 
     active = true;
 
     // the virtual USB device has to use the original slot, so the sd goes to the extra slot
-    clone_patch_attach_usb_hanlde(server_handle);
+    clone_patch_attach_usb_hanlde(attach_arg);
 }
 
 #ifdef USE_MLC_KEY
