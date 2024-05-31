@@ -34,7 +34,7 @@ CFLAGS			:=	-g -std=c11 -Os \
 					-fomit-frame-pointer -fdata-sections -ffunction-sections \
 					$(ARCH) -nostartfiles
 
-CFLAGS			+=	$(INCLUDE) -D_GNU_SOURCE -fno-builtin-printf -Wno-nonnull -Werror=implicit
+CFLAGS			+=	$(INCLUDE) -D_GNU_SOURCE -fno-builtin-printf -Wno-nonnull -Werror=implicit -DPLUGIN_NAME='"SDUSB"'
 
 CXXFLAGS		:=	$(CFLAGS) -fno-rtti -fno-exceptions
 
