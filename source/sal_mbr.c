@@ -54,7 +54,7 @@ static int sync_read(FSSALAttachDeviceArg* attach_arg, u64 lba, u32 blkCount, vo
     return res;
 }
 
-int read_usb_partition_from_mbr(FSSALAttachDeviceArg *attach_arg, u32* out_offset, u32* out_size, u32* out_umsBlkDevID){
+int read_usb_partition_from_mbr(FSSALAttachDeviceArg *attach_arg, u32* out_offset, u32* out_size, u8* out_umsBlkDevID){
     mbr_sector *mbr = iosAllocAligned(LOCAL_HEAP_ID, max(attach_arg->params.block_size, SECTOR_SIZE), 0x40);
     if(!mbr){
         debug_printf("%s: Failed to allocate IO buf\n", PLUGIN_NAME);
