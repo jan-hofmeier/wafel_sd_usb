@@ -11,14 +11,16 @@
 #include "wafel/ios/prsh.h"
 #include "wafel/hai.h"
 #include "rednand_config.h"
-#include "sal.h"
 #include "sal_partition.h"
+#include "sal_mbr.h"
 
 
 // tells crypto to not do crypto (depends on stroopwafel patch)
 #define NO_CRYPTO_HANDLE 0xDEADBEEF
 
-FSSALAttachDeviceArg extra_attach_arg;
+static int (*FSSAL_attach_device)(FSSALAttachDeviceArg*) = (void*)0x10733aa4;
+
+static FSSALAttachDeviceArg extra_attach_arg;
 
 static bool active = false;
 
@@ -32,7 +34,7 @@ static volatile bool learn_usb_crypto_handle = false;
 
 void clone_patch_attach_usb_hanlde(FSSALAttachDeviceArg *attach_arg){
     memcpy(&extra_attach_arg, attach_arg, sizeof(extra_attach_arg));
-    patch_partition_attach_arg(&extra_attach_arg);
+    patch_partition_attach_arg(&extra_attach_arg, DEVTYPE_USB);
     // somehow it doesn't work if we fix the handle pointer
     //extra_server_handle[0x3] = (int) extra_server_handle;
     learn_usb_crypto_handle = true;
@@ -72,7 +74,7 @@ void apply_hai_patches(void){
 void hook_register_sd(trampoline_state *state){
     FSSALAttachDeviceArg *attach_arg = (FSSALAttachDeviceArg*)state->r[0];
 
-    int res = read_usb_partition_from_mbr(attach_arg, &partition_offset, &partition_size);
+    int res = read_usb_partition_from_mbr(attach_arg, &partition_offset, &partition_size, NULL);
     if(res<=0)
         return;
 
