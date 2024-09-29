@@ -75,7 +75,7 @@ void hook_register_sd(trampoline_state *state){
     FSSALAttachDeviceArg *attach_arg = (FSSALAttachDeviceArg*)state->r[0];
 
     int res = read_usb_partition_from_mbr(attach_arg, &partition_offset, &partition_size, NULL);
-    if(res<=0)
+    if(res!=2)
         return;
 
     active = true;
