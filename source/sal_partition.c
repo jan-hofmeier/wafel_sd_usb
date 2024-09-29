@@ -23,13 +23,15 @@ static sync_func *real_sync;
 
 int read_wrapper(void *device_handle, u32 lba_hi, u32 lba_lo, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
     ADD_OFFSET(lba_hi, lba_lo);
-    return real_read(device_handle, lba_hi, lba_lo, blkCount, blockSize, buf, cb, cb_ctx);
+    int ret = real_read(device_handle, lba_hi, lba_lo, blkCount, blockSize, buf, cb, cb_ctx);
+    debug_printf("WFSREAD: %u, %u\n", lba_lo, blkCount);
+    return ret;
 }
 
 int write_wrapper(void *device_handle, u32 lba_hi, u32 lba_lo, u32 blkCount, u32 blockSize, void *buf, void *cb, void* cb_ctx){
     ADD_OFFSET(lba_hi, lba_lo);
     int ret = real_write(device_handle, lba_hi, lba_lo, blkCount, blockSize, buf, cb, cb_ctx);
-    //debug_printf("WFSWRITE: %u, %u\n", lba_lo, blkCount);
+    debug_printf("WFSWRITE: %u, %u\n", lba_lo, blkCount);
     return ret;
 }
 
